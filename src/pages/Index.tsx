@@ -1,14 +1,27 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import Navbar from '@/components/home/Navbar';
+import HeroSection from '@/components/home/HeroSection';
+import FeaturesSection from '@/components/home/FeaturesSection';
+import AboutSection from '@/components/home/AboutSection';
+import ServicesSection from '@/components/home/ServicesSection';
+import PortfolioSection from '@/components/home/PortfolioSection';
+import ContactSection from '@/components/home/ContactSection';
+import Footer from '@/components/home/Footer';
+import FloatingWhatsApp from '@/components/home/FloatingWhatsApp';
 
-const Index = () => {
+export default function Index() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-slate-950 antialiased">
+      <Navbar />
+      <main>
+        <HeroSection />
+        <FeaturesSection />
+        <AboutSection />
+        <ServicesSection />
+        <PortfolioSection />
+        <ContactSection />
+      </main>
+      <Footer />
+      <FloatingWhatsApp phoneNumber="5511949885625" />
     </div>
   );
-};
-
-export default Index;
+}
