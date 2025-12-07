@@ -128,9 +128,24 @@ export default function ServicesSection() {
                 <div className={`absolute inset-0 bg-gradient-to-br ${colorVariants[service.color].split(' ')[0]} ${colorVariants[service.color].split(' ')[1]} opacity-0 group-hover:opacity-5 transition-opacity duration-500`} />
 
                 {/* Icon */}
-                <div className={`inline-flex p-3 rounded-xl bg-gradient-to-br ${colorVariants[service.color]} shadow-lg group-hover:shadow-xl transition-shadow duration-300 mb-5`}>
-                  <service.icon className="w-6 h-6 text-white" />
-                </div>
+                <motion.div 
+                  className={`inline-flex p-3 rounded-xl bg-gradient-to-br ${colorVariants[service.color]} shadow-lg group-hover:shadow-xl transition-shadow duration-300 mb-5`}
+                  whileHover={{ scale: 1.1, rotate: 5 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                >
+                  <motion.div
+                    animate={{ 
+                      y: activeService === index ? [0, -3, 0] : 0,
+                    }}
+                    transition={{ 
+                      duration: 1.5, 
+                      repeat: activeService === index ? Infinity : 0,
+                      ease: "easeInOut"
+                    }}
+                  >
+                    <service.icon className="w-6 h-6 text-white" />
+                  </motion.div>
+                </motion.div>
 
                 {/* Content */}
                 <h3 className="text-xl font-semibold text-white mb-2 group-hover:text-blue-400 transition-colors">
@@ -162,14 +177,6 @@ export default function ServicesSection() {
                   </motion.ul>
                 </AnimatePresence>
 
-                {/* CTA */}
-                <button
-                  onClick={scrollToContact}
-                  className="inline-flex items-center text-blue-400 hover:text-blue-300 text-sm font-medium group/btn"
-                >
-                  Saiba mais
-                  <ArrowRight className="w-4 h-4 ml-1 group-hover/btn:translate-x-1 transition-transform" />
-                </button>
               </div>
             </motion.div>
           ))}
