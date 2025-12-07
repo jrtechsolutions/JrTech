@@ -5,25 +5,29 @@ const features = [
   {
     icon: TrendingUp,
     title: 'Crescimento Acelerado',
-    description: 'Impulsione sua empresa com tecnologia de ponta que escala conforme suas necessidades.',
+    subtitle: 'Tecnologia que acompanha sua evolução',
+    description: 'Implementamos soluções modernas e escaláveis — cloud, automações e infraestrutura — para que sua empresa cresça sem travar no caminho.',
     color: 'blue',
   },
   {
     icon: Clock,
     title: 'Resposta Rápida',
-    description: 'Suporte técnico ágil com tempo de resposta garantido para manter sua operação funcionando.',
+    subtitle: 'Atendimento ágil e eficiente',
+    description: 'Suporte rápido via WhatsApp, atendimento remoto imediato e presença quando necessário. Nada de demora para resolver o que pode ser resolvido na hora.',
     color: 'cyan',
   },
   {
     icon: Users,
-    title: 'Equipe Especializada',
-    description: 'Profissionais certificados e experientes dedicados ao sucesso do seu projeto.',
+    title: 'Soluções sob Medida',
+    subtitle: 'Serviços personalizados para cada necessidade',
+    description: 'Nada de "pacote genérico". Cada projeto é adaptado à realidade da sua empresa: TI, automação, segurança, integrações, cloud, rotinas e sistemas.',
     color: 'purple',
   },
   {
     icon: Award,
-    title: 'Qualidade Garantida',
-    description: 'Compromisso com excelência e resultados mensuráveis em cada entrega.',
+    title: 'Foco em Segurança',
+    subtitle: 'Proteção completa para seus dados e operação',
+    description: 'Segurança digital aplicada de forma prática: configurações, antivírus corporativo, VPN, backups, boas práticas e prevenção de incidentes.',
     color: 'green',
   },
 ];
@@ -61,8 +65,8 @@ export default function FeaturesSection() {
             </span>
           </h2>
           <p className="text-slate-400 text-lg max-w-2xl mx-auto">
-            Combinamos expertise técnica com atendimento personalizado para entregar 
-            soluções que realmente transformam.
+            Combinamos tecnologia, agilidade e atendimento consultivo para entregar 
+            soluções que realmente resolvem problemas e impulsionam resultados.
           </p>
         </motion.div>
 
@@ -83,10 +87,13 @@ export default function FeaturesSection() {
                   <feature.icon className="w-6 h-6 text-white" />
                 </div>
 
-                <h3 className="text-xl font-semibold text-white mb-3 group-hover:text-blue-400 transition-colors">
+                <h3 className="text-xl font-semibold text-white mb-1 group-hover:text-blue-400 transition-colors">
                   {feature.title}
                 </h3>
-                <p className="text-slate-400 leading-relaxed">
+                <p className="text-sm text-blue-400/80 mb-3">
+                  {feature.subtitle}
+                </p>
+                <p className="text-slate-400 leading-relaxed text-sm">
                   {feature.description}
                 </p>
 
@@ -112,7 +119,7 @@ export default function FeaturesSection() {
               </div>
               <div>
                 <h4 className="text-white font-semibold text-lg">Compromisso com Resultados</h4>
-                <p className="text-slate-400">Trabalhamos até você estar 100% satisfeito</p>
+                <p className="text-slate-400">Trabalhamos para que sua operação esteja sempre funcionando, entregando suporte e soluções com foco total em eficiência.</p>
               </div>
             </div>
             <div className="flex flex-wrap justify-center gap-6">
