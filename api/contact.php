@@ -1,16 +1,16 @@
 <?php
-// Habilitar exibição de erros para debug (remover em produção)
+// Configuração de erros
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 
-// Headers
+// Headers - devem ser enviados antes de qualquer output
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
-// Responder a requisições OPTIONS (preflight)
+// Responder a requisições OPTIONS (preflight CORS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
@@ -23,45 +23,72 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
+// Função para enviar resposta de erro
+function sendError($message, $code = 500, $debug = null) {
+    http_response_code($code);
+    $response = ['success' => false, 'message' => $message];
+    if ($debug !== null) {
+        $response['debug'] = $debug;
+    }
+    echo json_encode($response);
+    exit;
+}
+
+// Função para enviar resposta de sucesso
+function sendSuccess($message) {
+    http_response_code(200);
+    echo json_encode(['success' => true, 'message' => $message]);
+    exit;
+}
+
 try {
     // Receber dados JSON
-    $input = file_get_contents('php://input');
-    $data = json_decode($input, true);
+    $input = @file_get_contents('php://input');
+    
+    if ($input === false || empty($input)) {
+        sendError('Nenhum dado recebido', 400);
+    }
+    
+    $data = @json_decode($input, true);
     
     // Verificar se o JSON foi decodificado corretamente
     if (json_last_error() !== JSON_ERROR_NONE) {
-        throw new Exception('Erro ao processar dados JSON: ' . json_last_error_msg());
+        sendError('Erro ao processar JSON: ' . json_last_error_msg(), 400);
     }
     
     // Validar dados obrigatórios
     if (empty($data['name']) || empty($data['email']) || empty($data['message'])) {
-        http_response_code(400);
-        echo json_encode([
-            'success' => false, 
-            'message' => 'Campos obrigatórios não preenchidos (nome, email, mensagem)'
-        ]);
-        exit;
+        sendError('Campos obrigatórios não preenchidos (nome, email, mensagem)', 400);
     }
     
-    // Sanitizar dados (usando htmlspecialchars para compatibilidade com PHP 8+)
-    $name = htmlspecialchars(trim($data['name']), ENT_QUOTES, 'UTF-8');
-    $email = filter_var(trim($data['email']), FILTER_SANITIZE_EMAIL);
-    $phone = isset($data['phone']) ? htmlspecialchars(trim($data['phone']), ENT_QUOTES, 'UTF-8') : '';
-    $company = isset($data['company']) ? htmlspecialchars(trim($data['company']), ENT_QUOTES, 'UTF-8') : '';
-    $message = htmlspecialchars(trim($data['message']), ENT_QUOTES, 'UTF-8');
+    // Sanitizar e validar dados
+    $name = trim($data['name']);
+    $email = trim($data['email']);
+    $phone = isset($data['phone']) ? trim($data['phone']) : '';
+    $company = isset($data['company']) ? trim($data['company']) : '';
+    $message = trim($data['message']);
+    
+    // Validar tamanhos
+    if (strlen($name) > 200 || strlen($email) > 200 || strlen($message) > 5000) {
+        sendError('Dados muito longos', 400);
+    }
     
     // Validar email
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'Email inválido']);
-        exit;
+        sendError('Email inválido', 400);
     }
+    
+    // Sanitizar para HTML (prevenir XSS)
+    $name = htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
+    $phone = htmlspecialchars($phone, ENT_QUOTES, 'UTF-8');
+    $company = htmlspecialchars($company, ENT_QUOTES, 'UTF-8');
+    $message = htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
     
     // Configurações do email
     $to = 'contato@jrtechnologysolutions.com.br';
     $subject = 'Novo contato do site - ' . $name;
     
-    // Montar corpo do email
+    // Montar corpo do email (texto simples, sem HTML)
     $emailBody = "Você recebeu uma nova mensagem do formulário de contato do site.\n\n";
     $emailBody .= "Nome: " . $name . "\n";
     $emailBody .= "Email: " . $email . "\n";
@@ -70,49 +97,41 @@ try {
     $emailBody .= "Mensagem:\n" . $message . "\n";
     
     // Headers do email
-    $headers = "From: Formulário Site <contato@jrtechnologysolutions.com.br>\r\n";
-    $headers .= "Reply-To: " . $email . "\r\n";
-    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $headers .= "X-Mailer: PHP/" . phpversion();
+    $headers = array();
+    $headers[] = "From: Formulário Site <contato@jrtechnologysolutions.com.br>";
+    $headers[] = "Reply-To: " . $email;
+    $headers[] = "Content-Type: text/plain; charset=UTF-8";
+    $headers[] = "X-Mailer: PHP/" . phpversion();
+    $headersString = implode("\r\n", $headers);
     
-    // Tentar enviar o email
-    $mailSent = @mail($to, $subject, $emailBody, $headers);
-    
-    if ($mailSent) {
-        http_response_code(200);
-        echo json_encode([
-            'success' => true,
-            'message' => 'Mensagem enviada com sucesso!'
-        ]);
-    } else {
-        // Verificar se a função mail() está disponível
-        if (!function_exists('mail')) {
-            throw new Exception('Função mail() não está disponível no servidor');
-        }
-        
-        // Obter último erro do PHP
-        $error = error_get_last();
-        $errorMsg = $error ? $error['message'] : 'Erro desconhecido ao enviar email';
-        
-        http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Erro ao enviar mensagem. Tente novamente mais tarde.',
-            'debug' => $errorMsg // Remover em produção
-        ]);
+    // Verificar se a função mail() está disponível
+    if (!function_exists('mail')) {
+        sendError('Função mail() não está disponível no servidor', 500);
     }
     
-} catch (Exception $e) {
-    http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'message' => 'Erro ao processar solicitação: ' . $e->getMessage()
-    ]);
-} catch (Error $e) {
-    http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'message' => 'Erro fatal: ' . $e->getMessage()
-    ]);
+    // Tentar enviar o email
+    $mailSent = @mail($to, $subject, $emailBody, $headersString);
+    
+    if ($mailSent) {
+        sendSuccess('Mensagem enviada com sucesso!');
+    } else {
+        // Obter último erro do PHP
+        $error = error_get_last();
+        $errorMsg = 'Erro desconhecido ao enviar email';
+        
+        if ($error && isset($error['message'])) {
+            $errorMsg = $error['message'];
+        }
+        
+        // Log do erro (não expor detalhes ao usuário em produção)
+        error_log("Erro ao enviar email: " . $errorMsg);
+        
+        sendError('Erro ao enviar mensagem. Tente novamente mais tarde.', 500);
+    }
+    
+} catch (Throwable $e) {
+    // Captura tanto Exception quanto Error (PHP 7+)
+    error_log("Erro no contact.php: " . $e->getMessage() . " em " . $e->getFile() . ":" . $e->getLine());
+    sendError('Erro ao processar solicitação', 500);
 }
 ?>
