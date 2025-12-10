@@ -1,8 +1,12 @@
 <?php
 /**
- * Versão com múltiplas tentativas de conexão SMTP
- * Tenta SSL direto, STARTTLS, ou sem criptografia
+ * Versão otimizada com timeouts curtos
+ * Tenta mail() primeiro (mais rápido), depois SMTP rápido
  */
+
+// Aumentar timeout do PHP para este script
+set_time_limit(30);
+ini_set('max_execution_time', 30);
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
@@ -57,165 +61,47 @@ $emailBody .= "Telefone: " . ($phone ?: 'Não informado') . "\n";
 $emailBody .= "Empresa: " . ($company ?: 'Não informado') . "\n\n";
 $emailBody .= "Mensagem:\n$message\n";
 
-// ============================================
-// CONFIGURAÇÕES SMTP
-// ============================================
+// Função para salvar em arquivo (sempre fazer isso primeiro)
+function saveToFile($name, $email, $phone, $company, $message) {
+    $logFile = __DIR__ . '/contatos.txt';
+    $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
+    $logEntry .= str_repeat('-', 80) . "\n";
+    @file_put_contents($logFile, $logEntry, FILE_APPEND);
+}
+
+// Sempre salvar em arquivo primeiro (garantir que não perde)
+saveToFile($name, $email, $phone, $company, $message);
+
+// Tentar mail() primeiro (mais rápido, sem timeout)
+ini_set('sendmail_from', 'contato@jrtechnologysolutions.com.br');
+$headers = "From: Formulário Site <contato@jrtechnologysolutions.com.br>\r\n";
+$headers .= "Reply-To: $email\r\n";
+$headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+$headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
+
+error_clear_last();
+$mailResult = @mail($to, $subject, $emailBody, $headers);
+
+if ($mailResult) {
+    // Se mail() funcionou, retornar sucesso imediatamente
+    http_response_code(200);
+    echo json_encode(['success' => true, 'message' => 'Mensagem enviada com sucesso!']);
+    exit;
+}
+
+// Se mail() falhou, tentar SMTP mas com timeout muito curto
 $smtpHost = 'smtp.appuni.com.br';
 $smtpPort = 587;
 $smtpUsername = 'contato@jrtechnologysolutions.com.br';
 $smtpPassword = '';
 
-// Ler senha do arquivo
 $passwordFile = __DIR__ . '/.smtp_password';
 if (file_exists($passwordFile)) {
     $smtpPassword = trim(file_get_contents($passwordFile));
 }
 
 if (empty($smtpPassword)) {
-    $smtpPassword = getenv('SMTP_PASSWORD') ?: '';
-}
-
-// Função para enviar via SMTP (tenta sem STARTTLS primeiro)
-function sendEmailSMTP($host, $port, $username, $password, $to, $subject, $body, $fromEmail, $fromName, $replyTo) {
-    // Tentar conectar sem SSL primeiro
-    $context = stream_context_create([
-        'ssl' => [
-            'verify_peer' => false,
-            'verify_peer_name' => false,
-            'allow_self_signed' => true
-        ]
-    ]);
-    
-    $socket = @stream_socket_client(
-        "tcp://$host:$port",
-        $errno,
-        $errstr,
-        10,
-        STREAM_CLIENT_CONNECT,
-        $context
-    );
-    
-    if (!$socket) {
-        return ['success' => false, 'error' => "Não foi possível conectar: $errstr ($errno)"];
-    }
-    
-    // Ler resposta inicial
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '220') {
-        fclose($socket);
-        return ['success' => false, 'error' => "Servidor não respondeu: $response"];
-    }
-    
-    // EHLO
-    fputs($socket, "EHLO " . $_SERVER['HTTP_HOST'] . "\r\n");
-    $response = '';
-    while ($line = fgets($socket, 515)) {
-        $response .= $line;
-        if (substr($line, 3, 1) == ' ') break;
-    }
-    
-    // Tentar STARTTLS apenas se o servidor suportar
-    if (strpos($response, 'STARTTLS') !== false) {
-        fputs($socket, "STARTTLS\r\n");
-        $response = fgets($socket, 515);
-        
-        // Se STARTTLS for aceito, negociar TLS
-        if (substr($response, 0, 3) == '220') {
-            if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-                fclose($socket);
-                return ['success' => false, 'error' => 'Falha ao negociar TLS'];
-            }
-            
-            // EHLO novamente após TLS
-            fputs($socket, "EHLO " . $_SERVER['HTTP_HOST'] . "\r\n");
-            $response = '';
-            while ($line = fgets($socket, 515)) {
-                $response .= $line;
-                if (substr($line, 3, 1) == ' ') break;
-            }
-        }
-        // Se STARTTLS foi rejeitado (503), continuar sem TLS
-    }
-    
-    // AUTH LOGIN
-    fputs($socket, "AUTH LOGIN\r\n");
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '334') {
-        fclose($socket);
-        return ['success' => false, 'error' => "AUTH LOGIN falhou: $response"];
-    }
-    
-    // Enviar usuário
-    fputs($socket, base64_encode($username) . "\r\n");
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '334') {
-        fclose($socket);
-        return ['success' => false, 'error' => "Usuário rejeitado: $response"];
-    }
-    
-    // Enviar senha
-    fputs($socket, base64_encode($password) . "\r\n");
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '235') {
-        fclose($socket);
-        return ['success' => false, 'error' => "Autenticação falhou: $response"];
-    }
-    
-    // MAIL FROM
-    fputs($socket, "MAIL FROM: <$fromEmail>\r\n");
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '250') {
-        fclose($socket);
-        return ['success' => false, 'error' => "MAIL FROM falhou: $response"];
-    }
-    
-    // RCPT TO
-    fputs($socket, "RCPT TO: <$to>\r\n");
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '250') {
-        fclose($socket);
-        return ['success' => false, 'error' => "RCPT TO falhou: $response"];
-    }
-    
-    // DATA
-    fputs($socket, "DATA\r\n");
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '354') {
-        fclose($socket);
-        return ['success' => false, 'error' => "DATA falhou: $response"];
-    }
-    
-    // Headers e corpo
-    $headers = "From: $fromName <$fromEmail>\r\n";
-    $headers .= "To: <$to>\r\n";
-    $headers .= "Reply-To: $replyTo\r\n";
-    $headers .= "Subject: $subject\r\n";
-    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $headers .= "Date: " . date('r') . "\r\n";
-    $headers .= "\r\n";
-    
-    fputs($socket, $headers . $body . "\r\n.\r\n");
-    $response = fgets($socket, 515);
-    
-    // QUIT
-    fputs($socket, "QUIT\r\n");
-    fclose($socket);
-    
-    if (substr($response, 0, 3) == '250') {
-        return ['success' => true];
-    } else {
-        return ['success' => false, 'error' => "Envio falhou: $response"];
-    }
-}
-
-// Verificar se tem senha
-if (empty($smtpPassword)) {
-    $logFile = __DIR__ . '/contatos.txt';
-    $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
-    $logEntry .= "AVISO: Senha SMTP não configurada\n";
-    $logEntry .= str_repeat('-', 80) . "\n";
-    @file_put_contents($logFile, $logEntry, FILE_APPEND);
-    
+    // Se não tem senha, já salvou em arquivo, retornar sucesso
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -224,32 +110,161 @@ if (empty($smtpPassword)) {
     exit;
 }
 
-// Tentar enviar via SMTP
-$smtpResult = sendEmailSMTP(
-    $smtpHost,
-    $smtpPort,
-    $smtpUsername,
-    $smtpPassword,
-    $to,
-    $subject,
-    $emailBody,
-    'contato@jrtechnologysolutions.com.br',
-    'Formulário Site',
-    $email
+// Tentar SMTP com timeout muito curto (5 segundos)
+$context = stream_context_create([
+    'ssl' => [
+        'verify_peer' => false,
+        'verify_peer_name' => false,
+        'allow_self_signed' => true
+    ],
+    'socket' => [
+        'bindto' => '0.0.0.0:0'
+    ]
+]);
+
+// Usar stream_socket_client com timeout curto
+$socket = @stream_socket_client(
+    "tcp://$smtpHost:$smtpPort",
+    $errno,
+    $errstr,
+    5, // Timeout de 5 segundos apenas
+    STREAM_CLIENT_CONNECT,
+    $context
 );
 
-if ($smtpResult['success']) {
+if (!$socket) {
+    // Se não conseguiu conectar em 5 segundos, já salvou em arquivo, retornar sucesso
     http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// Configurar timeout de leitura/escrita
+stream_set_timeout($socket, 3); // 3 segundos para operações
+
+// Ler resposta inicial
+$response = @fgets($socket, 515);
+if (!$response || substr($response, 0, 3) != '220') {
+    @fclose($socket);
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// EHLO
+@fputs($socket, "EHLO " . $_SERVER['HTTP_HOST'] . "\r\n");
+$response = '';
+$timeout = time() + 3;
+while (time() < $timeout && ($line = @fgets($socket, 515))) {
+    $response .= $line;
+    if (substr($line, 3, 1) == ' ') break;
+}
+
+// AUTH LOGIN (pular STARTTLS para ser mais rápido)
+@fputs($socket, "AUTH LOGIN\r\n");
+$response = @fgets($socket, 515);
+if (!$response || substr($response, 0, 3) != '334') {
+    @fclose($socket);
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// Enviar usuário
+@fputs($socket, base64_encode($smtpUsername) . "\r\n");
+$response = @fgets($socket, 515);
+if (!$response || substr($response, 0, 3) != '334') {
+    @fclose($socket);
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// Enviar senha
+@fputs($socket, base64_encode($smtpPassword) . "\r\n");
+$response = @fgets($socket, 515);
+if (!$response || substr($response, 0, 3) != '235') {
+    @fclose($socket);
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// MAIL FROM
+@fputs($socket, "MAIL FROM: <contato@jrtechnologysolutions.com.br>\r\n");
+$response = @fgets($socket, 515);
+if (!$response || substr($response, 0, 3) != '250') {
+    @fclose($socket);
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// RCPT TO
+@fputs($socket, "RCPT TO: <$to>\r\n");
+$response = @fgets($socket, 515);
+if (!$response || substr($response, 0, 3) != '250') {
+    @fclose($socket);
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// DATA
+@fputs($socket, "DATA\r\n");
+$response = @fgets($socket, 515);
+if (!$response || substr($response, 0, 3) != '354') {
+    @fclose($socket);
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
+
+// Headers e corpo
+$headers = "From: Formulário Site <contato@jrtechnologysolutions.com.br>\r\n";
+$headers .= "To: <$to>\r\n";
+$headers .= "Reply-To: $email\r\n";
+$headers .= "Subject: $subject\r\n";
+$headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+$headers .= "Date: " . date('r') . "\r\n";
+$headers .= "\r\n";
+
+@fputs($socket, $headers . $emailBody . "\r\n.\r\n");
+$response = @fgets($socket, 515);
+
+// QUIT
+@fputs($socket, "QUIT\r\n");
+@fclose($socket);
+
+// Sempre retornar sucesso (já salvou em arquivo)
+http_response_code(200);
+if ($response && substr($response, 0, 3) == '250') {
     echo json_encode(['success' => true, 'message' => 'Mensagem enviada com sucesso!']);
 } else {
-    // Se falhou, salvar em arquivo
-    $logFile = __DIR__ . '/contatos.txt';
-    $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
-    $logEntry .= "Erro SMTP: " . ($smtpResult['error'] ?? 'Desconhecido') . "\n";
-    $logEntry .= str_repeat('-', 80) . "\n";
-    @file_put_contents($logFile, $logEntry, FILE_APPEND);
-    
-    http_response_code(200);
     echo json_encode([
         'success' => true,
         'message' => 'Mensagem recebida! Entraremos em contato em breve.'
