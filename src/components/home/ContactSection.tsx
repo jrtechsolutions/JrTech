@@ -54,7 +54,7 @@ export default function ContactSection() {
     setIsSubmitting(true);
     
     try {
-      const response = await fetch('/api/contact-simple.php', {
+      const response = await fetch('/api/contact.php', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

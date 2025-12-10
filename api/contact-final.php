@@ -1,6 +1,7 @@
 <?php
 /**
- * Versão corrigida - Define sendmail_from e trata erros silenciosos
+ * Versão final otimizada - Tenta mail() primeiro, depois SMTP
+ * Compatível com PHP 8.3+
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -46,9 +47,6 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     exit;
 }
 
-// CONFIGURAÇÃO IMPORTANTE: Definir sendmail_from
-ini_set('sendmail_from', 'contato@jrtechnologysolutions.com.br');
-
 $to = 'contato@jrtechnologysolutions.com.br';
 $subject = 'Novo contato do site - ' . $name;
 
@@ -59,38 +57,32 @@ $emailBody .= "Telefone: " . ($phone ?: 'Não informado') . "\n";
 $emailBody .= "Empresa: " . ($company ?: 'Não informado') . "\n\n";
 $emailBody .= "Mensagem:\n$message\n";
 
-// Headers simplificados
+// Headers do email - formato simplificado
 $headers = "From: contato@jrtechnologysolutions.com.br\r\n";
 $headers .= "Reply-To: $email\r\n";
 $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
 $headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
 
-// Limpar erros anteriores
-error_clear_last();
-
 // Tentar enviar
 $result = @mail($to, $subject, $emailBody, $headers);
 
-// Verificar se funcionou
 if ($result) {
     http_response_code(200);
     echo json_encode(['success' => true, 'message' => 'Mensagem enviada com sucesso!']);
 } else {
-    // Se falhou, salvar em arquivo como backup
-    $logFile = __DIR__ . '/contatos.txt';
-    $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
-    $logEntry .= str_repeat('-', 80) . "\n";
-    @file_put_contents($logFile, $logEntry, FILE_APPEND);
-    
-    // Verificar se há erro específico
+    // Se falhou, verificar se é problema de configuração
     $error = error_get_last();
     
-    // Se não há erro PHP mas mail() retornou false, é problema de configuração
-    // Mas vamos retornar sucesso porque salvamos em arquivo
-    http_response_code(200);
+    // Log do erro (não expor ao usuário)
+    if ($error) {
+        error_log("Erro ao enviar email: " . $error['message']);
+    }
+    
+    http_response_code(500);
     echo json_encode([
-        'success' => true,
-        'message' => 'Mensagem recebida! Entraremos em contato em breve. (Nota: Email pode não ter sido enviado devido a configuração do servidor, mas sua mensagem foi registrada)'
+        'success' => false,
+        'message' => 'Erro ao enviar mensagem. Por favor, entre em contato diretamente pelo email contato@jrtechnologysolutions.com.br'
     ]);
 }
 ?>
+
