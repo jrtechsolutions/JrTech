@@ -75,27 +75,64 @@ export default function FeaturesSection() {
           {features.map((feature, index) => (
             <motion.div
               key={feature.title}
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0, y: 50, scale: 0.9, rotateX: 15 }}
+              whileInView={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
               viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: index * 0.1 }}
+              transition={{ 
+                duration: 0.7, 
+                delay: index * 0.15,
+                type: "spring",
+                stiffness: 100,
+                damping: 15
+              }}
+              whileHover={{ y: -8, transition: { duration: 0.3 } }}
               className="group relative"
             >
-              <div className="relative h-full p-6 bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300 hover:-translate-y-1">
-                {/* Icon */}
-                <div className={`inline-flex p-3 rounded-xl bg-gradient-to-br ${colorClasses[feature.color]} shadow-lg mb-5`}>
+              <div className="relative h-full p-6 bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300">
+                {/* Icon with animation */}
+                <motion.div 
+                  className={`inline-flex p-3 rounded-xl bg-gradient-to-br ${colorClasses[feature.color]} shadow-lg mb-5`}
+                  initial={{ scale: 0, rotate: -180 }}
+                  whileInView={{ scale: 1, rotate: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ 
+                    duration: 0.5, 
+                    delay: index * 0.15 + 0.3,
+                    type: "spring",
+                    stiffness: 200
+                  }}
+                  whileHover={{ scale: 1.1, rotate: 5 }}
+                >
                   <feature.icon className="w-6 h-6 text-white" />
-                </div>
+                </motion.div>
 
-                <h3 className="text-xl font-semibold text-white mb-1 group-hover:text-blue-400 transition-colors">
+                <motion.h3 
+                  className="text-xl font-semibold text-white mb-1 group-hover:text-blue-400 transition-colors"
+                  initial={{ opacity: 0, x: -20 }}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.4, delay: index * 0.15 + 0.4 }}
+                >
                   {feature.title}
-                </h3>
-                <p className="text-sm text-blue-400/80 mb-3">
+                </motion.h3>
+                <motion.p 
+                  className="text-sm text-blue-400/80 mb-3"
+                  initial={{ opacity: 0, x: -20 }}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.4, delay: index * 0.15 + 0.5 }}
+                >
                   {feature.subtitle}
-                </p>
-                <p className="text-slate-400 leading-relaxed text-sm">
+                </motion.p>
+                <motion.p 
+                  className="text-slate-400 leading-relaxed text-sm"
+                  initial={{ opacity: 0 }}
+                  whileInView={{ opacity: 1 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.5, delay: index * 0.15 + 0.6 }}
+                >
                   {feature.description}
-                </p>
+                </motion.p>
 
                 {/* Hover Glow */}
                 <div className="absolute -inset-px bg-gradient-to-r from-blue-500/0 via-blue-500/10 to-cyan-500/0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity -z-10 blur-xl" />
@@ -123,7 +160,7 @@ export default function FeaturesSection() {
               </div>
             </div>
             <div className="flex flex-wrap justify-center gap-6">
-              {['Microsoft Partner', 'ISO 27001', 'LGPD Compliance'].map((badge) => (
+              {['Suporte Especializado', 'Segurança da Informação', 'Cloud Computing'].map((badge) => (
                 <div key={badge} className="px-4 py-2 bg-slate-800/50 rounded-lg border border-slate-700/50">
                   <span className="text-slate-300 text-sm font-medium">{badge}</span>
                 </div>
