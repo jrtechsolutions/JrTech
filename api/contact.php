@@ -1,10 +1,8 @@
 <?php
 /**
- * Versão otimizada com timeouts curtos
- * Tenta mail() primeiro (mais rápido), depois SMTP rápido
+ * Versão com logs detalhados e tentativas mais robustas
  */
 
-// Aumentar timeout do PHP para este script
 set_time_limit(30);
 ini_set('max_execution_time', 30);
 
@@ -61,18 +59,21 @@ $emailBody .= "Telefone: " . ($phone ?: 'Não informado') . "\n";
 $emailBody .= "Empresa: " . ($company ?: 'Não informado') . "\n\n";
 $emailBody .= "Mensagem:\n$message\n";
 
-// Função para salvar em arquivo (sempre fazer isso primeiro)
-function saveToFile($name, $email, $phone, $company, $message) {
+// Função para salvar em arquivo com log de tentativas
+function saveToFile($name, $email, $phone, $company, $message, $logInfo = '') {
     $logFile = __DIR__ . '/contatos.txt';
     $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
+    if ($logInfo) {
+        $logEntry .= "Log: $logInfo\n";
+    }
     $logEntry .= str_repeat('-', 80) . "\n";
     @file_put_contents($logFile, $logEntry, FILE_APPEND);
 }
 
-// Sempre salvar em arquivo primeiro (garantir que não perde)
-saveToFile($name, $email, $phone, $company, $message);
+// Sempre salvar primeiro
+saveToFile($name, $email, $phone, $company, $message, 'Iniciando tentativas de envio');
 
-// Tentar mail() primeiro (mais rápido, sem timeout)
+// Tentar mail() primeiro
 ini_set('sendmail_from', 'contato@jrtechnologysolutions.com.br');
 $headers = "From: Formulário Site <contato@jrtechnologysolutions.com.br>\r\n";
 $headers .= "Reply-To: $email\r\n";
@@ -81,15 +82,19 @@ $headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
 
 error_clear_last();
 $mailResult = @mail($to, $subject, $emailBody, $headers);
+$mailError = error_get_last();
 
 if ($mailResult) {
-    // Se mail() funcionou, retornar sucesso imediatamente
+    saveToFile($name, $email, $phone, $company, $message, 'mail() retornou TRUE - email enviado com sucesso');
     http_response_code(200);
     echo json_encode(['success' => true, 'message' => 'Mensagem enviada com sucesso!']);
     exit;
+} else {
+    $mailErrorMsg = $mailError ? $mailError['message'] : 'mail() retornou FALSE sem erro específico';
+    saveToFile($name, $email, $phone, $company, $message, "mail() falhou: $mailErrorMsg");
 }
 
-// Se mail() falhou, tentar SMTP mas com timeout muito curto
+// Se mail() falhou, tentar SMTP
 $smtpHost = 'smtp.appuni.com.br';
 $smtpPort = 587;
 $smtpUsername = 'contato@jrtechnologysolutions.com.br';
@@ -98,42 +103,44 @@ $smtpPassword = '';
 $passwordFile = __DIR__ . '/.smtp_password';
 if (file_exists($passwordFile)) {
     $smtpPassword = trim(file_get_contents($passwordFile));
+    if (!empty($smtpPassword)) {
+        saveToFile($name, $email, $phone, $company, $message, 'Senha SMTP encontrada no arquivo');
+    } else {
+        saveToFile($name, $email, $phone, $company, $message, 'Arquivo .smtp_password existe mas está vazio');
+    }
+} else {
+    saveToFile($name, $email, $phone, $company, $message, 'Arquivo .smtp_password não encontrado - email não será enviado via SMTP');
 }
 
 if (empty($smtpPassword)) {
-    // Se não tem senha, já salvou em arquivo, retornar sucesso
     http_response_code(200);
     echo json_encode([
         'success' => true,
-        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+        'message' => 'Mensagem recebida! Entraremos em contato em breve. (Email não configurado)'
     ]);
     exit;
 }
 
-// Tentar SMTP com timeout muito curto (5 segundos)
+// Tentar SMTP com timeout curto
 $context = stream_context_create([
     'ssl' => [
         'verify_peer' => false,
         'verify_peer_name' => false,
         'allow_self_signed' => true
-    ],
-    'socket' => [
-        'bindto' => '0.0.0.0:0'
     ]
 ]);
 
-// Usar stream_socket_client com timeout curto
 $socket = @stream_socket_client(
     "tcp://$smtpHost:$smtpPort",
     $errno,
     $errstr,
-    5, // Timeout de 5 segundos apenas
+    5,
     STREAM_CLIENT_CONNECT,
     $context
 );
 
 if (!$socket) {
-    // Se não conseguiu conectar em 5 segundos, já salvou em arquivo, retornar sucesso
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: Não conseguiu conectar em 5s - $errstr ($errno)");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -142,13 +149,13 @@ if (!$socket) {
     exit;
 }
 
-// Configurar timeout de leitura/escrita
-stream_set_timeout($socket, 3); // 3 segundos para operações
+stream_set_timeout($socket, 3);
 
 // Ler resposta inicial
 $response = @fgets($socket, 515);
 if (!$response || substr($response, 0, 3) != '220') {
     @fclose($socket);
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: Resposta inicial inválida - $response");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -166,11 +173,12 @@ while (time() < $timeout && ($line = @fgets($socket, 515))) {
     if (substr($line, 3, 1) == ' ') break;
 }
 
-// AUTH LOGIN (pular STARTTLS para ser mais rápido)
+// AUTH LOGIN
 @fputs($socket, "AUTH LOGIN\r\n");
 $response = @fgets($socket, 515);
 if (!$response || substr($response, 0, 3) != '334') {
     @fclose($socket);
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: AUTH LOGIN falhou - $response");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -184,6 +192,7 @@ if (!$response || substr($response, 0, 3) != '334') {
 $response = @fgets($socket, 515);
 if (!$response || substr($response, 0, 3) != '334') {
     @fclose($socket);
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: Usuário rejeitado - $response");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -197,6 +206,7 @@ if (!$response || substr($response, 0, 3) != '334') {
 $response = @fgets($socket, 515);
 if (!$response || substr($response, 0, 3) != '235') {
     @fclose($socket);
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: Autenticação falhou - $response");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -210,6 +220,7 @@ if (!$response || substr($response, 0, 3) != '235') {
 $response = @fgets($socket, 515);
 if (!$response || substr($response, 0, 3) != '250') {
     @fclose($socket);
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: MAIL FROM falhou - $response");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -223,6 +234,7 @@ if (!$response || substr($response, 0, 3) != '250') {
 $response = @fgets($socket, 515);
 if (!$response || substr($response, 0, 3) != '250') {
     @fclose($socket);
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: RCPT TO falhou - $response");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -236,6 +248,7 @@ if (!$response || substr($response, 0, 3) != '250') {
 $response = @fgets($socket, 515);
 if (!$response || substr($response, 0, 3) != '354') {
     @fclose($socket);
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: DATA falhou - $response");
     http_response_code(200);
     echo json_encode([
         'success' => true,
@@ -260,11 +273,14 @@ $response = @fgets($socket, 515);
 @fputs($socket, "QUIT\r\n");
 @fclose($socket);
 
-// Sempre retornar sucesso (já salvou em arquivo)
-http_response_code(200);
+// Verificar resultado
 if ($response && substr($response, 0, 3) == '250') {
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: Email enviado com sucesso - $response");
+    http_response_code(200);
     echo json_encode(['success' => true, 'message' => 'Mensagem enviada com sucesso!']);
 } else {
+    saveToFile($name, $email, $phone, $company, $message, "SMTP: Envio falhou no final - $response");
+    http_response_code(200);
     echo json_encode([
         'success' => true,
         'message' => 'Mensagem recebida! Entraremos em contato em breve.'
