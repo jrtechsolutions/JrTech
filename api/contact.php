@@ -1,7 +1,7 @@
 <?php
 /**
- * Versão com SMTP autenticado e STARTTLS
- * Configurado para smtp.appuni.com.br:587
+ * Versão com múltiplas tentativas de conexão SMTP
+ * Tenta SSL direto, STARTTLS, ou sem criptografia
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -58,29 +58,26 @@ $emailBody .= "Empresa: " . ($company ?: 'Não informado') . "\n\n";
 $emailBody .= "Mensagem:\n$message\n";
 
 // ============================================
-// CONFIGURAÇÕES SMTP DO PLESK
+// CONFIGURAÇÕES SMTP
 // ============================================
 $smtpHost = 'smtp.appuni.com.br';
 $smtpPort = 587;
 $smtpUsername = 'contato@jrtechnologysolutions.com.br';
-// IMPORTANTE: Você precisa criar um arquivo de configuração com a senha
-// Ou definir a senha aqui (não recomendado por segurança)
-$smtpPassword = ''; // PREENCHA COM A SENHA DO EMAIL
+$smtpPassword = '';
 
-// Função para ler senha de arquivo seguro (recomendado)
+// Ler senha do arquivo
 $passwordFile = __DIR__ . '/.smtp_password';
 if (file_exists($passwordFile)) {
     $smtpPassword = trim(file_get_contents($passwordFile));
 }
 
-// Se ainda não tiver senha, tenta usar variável de ambiente
 if (empty($smtpPassword)) {
     $smtpPassword = getenv('SMTP_PASSWORD') ?: '';
 }
 
-// Função para enviar via SMTP com STARTTLS
+// Função para enviar via SMTP (tenta sem STARTTLS primeiro)
 function sendEmailSMTP($host, $port, $username, $password, $to, $subject, $body, $fromEmail, $fromName, $replyTo) {
-    // Conectar ao servidor SMTP
+    // Tentar conectar sem SSL primeiro
     $context = stream_context_create([
         'ssl' => [
             'verify_peer' => false,
@@ -102,9 +99,6 @@ function sendEmailSMTP($host, $port, $username, $password, $to, $subject, $body,
         return ['success' => false, 'error' => "Não foi possível conectar: $errstr ($errno)"];
     }
     
-    // Habilitar criptografia
-    stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
-    
     // Ler resposta inicial
     $response = fgets($socket, 515);
     if (substr($response, 0, 3) != '220') {
@@ -120,26 +114,27 @@ function sendEmailSMTP($host, $port, $username, $password, $to, $subject, $body,
         if (substr($line, 3, 1) == ' ') break;
     }
     
-    // STARTTLS
-    fputs($socket, "STARTTLS\r\n");
-    $response = fgets($socket, 515);
-    if (substr($response, 0, 3) != '220') {
-        fclose($socket);
-        return ['success' => false, 'error' => "STARTTLS falhou: $response"];
-    }
-    
-    // Negociar TLS
-    if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-        fclose($socket);
-        return ['success' => false, 'error' => 'Falha ao negociar TLS'];
-    }
-    
-    // EHLO novamente após TLS
-    fputs($socket, "EHLO " . $_SERVER['HTTP_HOST'] . "\r\n");
-    $response = '';
-    while ($line = fgets($socket, 515)) {
-        $response .= $line;
-        if (substr($line, 3, 1) == ' ') break;
+    // Tentar STARTTLS apenas se o servidor suportar
+    if (strpos($response, 'STARTTLS') !== false) {
+        fputs($socket, "STARTTLS\r\n");
+        $response = fgets($socket, 515);
+        
+        // Se STARTTLS for aceito, negociar TLS
+        if (substr($response, 0, 3) == '220') {
+            if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                fclose($socket);
+                return ['success' => false, 'error' => 'Falha ao negociar TLS'];
+            }
+            
+            // EHLO novamente após TLS
+            fputs($socket, "EHLO " . $_SERVER['HTTP_HOST'] . "\r\n");
+            $response = '';
+            while ($line = fgets($socket, 515)) {
+                $response .= $line;
+                if (substr($line, 3, 1) == ' ') break;
+            }
+        }
+        // Se STARTTLS foi rejeitado (503), continuar sem TLS
     }
     
     // AUTH LOGIN
@@ -213,12 +208,11 @@ function sendEmailSMTP($host, $port, $username, $password, $to, $subject, $body,
     }
 }
 
-// Verificar se tem senha configurada
+// Verificar se tem senha
 if (empty($smtpPassword)) {
-    // Se não tem senha, salvar em arquivo e pedir para configurar
     $logFile = __DIR__ . '/contatos.txt';
     $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
-    $logEntry .= "AVISO: Senha SMTP não configurada. Configure a senha no arquivo contact.php ou crie .smtp_password\n";
+    $logEntry .= "AVISO: Senha SMTP não configurada\n";
     $logEntry .= str_repeat('-', 80) . "\n";
     @file_put_contents($logFile, $logEntry, FILE_APPEND);
     
