@@ -62,7 +62,18 @@ export default function ContactSection() {
         body: JSON.stringify(formData),
       });
 
+      // Verificar se a resposta é JSON válido
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        throw new Error(`Erro no servidor (${response.status}). Verifique os logs ou entre em contato com o suporte.`);
+      }
+
       const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || `Erro ${response.status}: Não foi possível enviar a mensagem.`);
+      }
 
       if (result.success) {
         toast({
@@ -81,6 +92,7 @@ export default function ContactSection() {
         throw new Error(result.message || 'Erro ao enviar mensagem');
       }
     } catch (error) {
+      console.error('Erro ao enviar formulário:', error);
       toast({
         title: "Erro ao enviar",
         description: error instanceof Error ? error.message : "Não foi possível enviar sua mensagem. Tente novamente.",
