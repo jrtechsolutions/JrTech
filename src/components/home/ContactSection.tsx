@@ -53,22 +53,42 @@ export default function ContactSection() {
     e.preventDefault();
     setIsSubmitting(true);
     
-    // Simulate form submission
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    toast({
-      title: "Mensagem enviada!",
-      description: "Entraremos em contato em breve.",
-    });
-    
-    setFormData({
-      name: '',
-      email: '',
-      phone: '',
-      company: '',
-      message: '',
-    });
-    setIsSubmitting(false);
+    try {
+      const response = await fetch('/api/contact.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast({
+          title: "Mensagem enviada!",
+          description: "Entraremos em contato em breve.",
+        });
+        
+        setFormData({
+          name: '',
+          email: '',
+          phone: '',
+          company: '',
+          message: '',
+        });
+      } else {
+        throw new Error(result.message || 'Erro ao enviar mensagem');
+      }
+    } catch (error) {
+      toast({
+        title: "Erro ao enviar",
+        description: error instanceof Error ? error.message : "Não foi possível enviar sua mensagem. Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
