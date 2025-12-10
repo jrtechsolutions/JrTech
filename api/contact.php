@@ -1,7 +1,7 @@
 <?php
 /**
- * Versão que usa SMTP do Plesk diretamente
- * Funciona mesmo quando mail() falha
+ * Versão com SMTP autenticado e STARTTLS
+ * Configurado para smtp.appuni.com.br:587
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -57,43 +57,121 @@ $emailBody .= "Telefone: " . ($phone ?: 'Não informado') . "\n";
 $emailBody .= "Empresa: " . ($company ?: 'Não informado') . "\n\n";
 $emailBody .= "Mensagem:\n$message\n";
 
-// Função para enviar via SMTP direto (sem bibliotecas)
-function sendEmailSMTP($to, $subject, $body, $fromEmail, $fromName, $replyTo) {
-    // No Plesk, geralmente o servidor SMTP local é 'localhost' na porta 25
-    // Ou pode ser o servidor de email do domínio
-    $smtpHost = 'localhost'; // Tenta localhost primeiro (servidor local do Plesk)
-    $smtpPort = 25;
+// ============================================
+// CONFIGURAÇÕES SMTP DO PLESK
+// ============================================
+$smtpHost = 'smtp.appuni.com.br';
+$smtpPort = 587;
+$smtpUsername = 'contato@jrtechnologysolutions.com.br';
+// IMPORTANTE: Você precisa criar um arquivo de configuração com a senha
+// Ou definir a senha aqui (não recomendado por segurança)
+$smtpPassword = ''; // PREENCHA COM A SENHA DO EMAIL
+
+// Função para ler senha de arquivo seguro (recomendado)
+$passwordFile = __DIR__ . '/.smtp_password';
+if (file_exists($passwordFile)) {
+    $smtpPassword = trim(file_get_contents($passwordFile));
+}
+
+// Se ainda não tiver senha, tenta usar variável de ambiente
+if (empty($smtpPassword)) {
+    $smtpPassword = getenv('SMTP_PASSWORD') ?: '';
+}
+
+// Função para enviar via SMTP com STARTTLS
+function sendEmailSMTP($host, $port, $username, $password, $to, $subject, $body, $fromEmail, $fromName, $replyTo) {
+    // Conectar ao servidor SMTP
+    $context = stream_context_create([
+        'ssl' => [
+            'verify_peer' => false,
+            'verify_peer_name' => false,
+            'allow_self_signed' => true
+        ]
+    ]);
     
-    // Tentar conectar ao servidor SMTP
-    $socket = @fsockopen($smtpHost, $smtpPort, $errno, $errstr, 10);
+    $socket = @stream_socket_client(
+        "tcp://$host:$port",
+        $errno,
+        $errstr,
+        10,
+        STREAM_CLIENT_CONNECT,
+        $context
+    );
     
     if (!$socket) {
-        // Se localhost falhar, tenta o servidor do domínio
-        $smtpHost = 'mail.jrtechnologysolutions.com.br';
-        $socket = @fsockopen($smtpHost, $smtpPort, $errno, $errstr, 10);
-        
-        if (!$socket) {
-            return ['success' => false, 'error' => "Não foi possível conectar ao servidor SMTP: $errstr ($errno)"];
-        }
+        return ['success' => false, 'error' => "Não foi possível conectar: $errstr ($errno)"];
     }
+    
+    // Habilitar criptografia
+    stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
     
     // Ler resposta inicial
     $response = fgets($socket, 515);
     if (substr($response, 0, 3) != '220') {
         fclose($socket);
-        return ['success' => false, 'error' => "Servidor SMTP não respondeu: $response"];
+        return ['success' => false, 'error' => "Servidor não respondeu: $response"];
     }
     
     // EHLO
     fputs($socket, "EHLO " . $_SERVER['HTTP_HOST'] . "\r\n");
+    $response = '';
+    while ($line = fgets($socket, 515)) {
+        $response .= $line;
+        if (substr($line, 3, 1) == ' ') break;
+    }
+    
+    // STARTTLS
+    fputs($socket, "STARTTLS\r\n");
     $response = fgets($socket, 515);
+    if (substr($response, 0, 3) != '220') {
+        fclose($socket);
+        return ['success' => false, 'error' => "STARTTLS falhou: $response"];
+    }
+    
+    // Negociar TLS
+    if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+        fclose($socket);
+        return ['success' => false, 'error' => 'Falha ao negociar TLS'];
+    }
+    
+    // EHLO novamente após TLS
+    fputs($socket, "EHLO " . $_SERVER['HTTP_HOST'] . "\r\n");
+    $response = '';
+    while ($line = fgets($socket, 515)) {
+        $response .= $line;
+        if (substr($line, 3, 1) == ' ') break;
+    }
+    
+    // AUTH LOGIN
+    fputs($socket, "AUTH LOGIN\r\n");
+    $response = fgets($socket, 515);
+    if (substr($response, 0, 3) != '334') {
+        fclose($socket);
+        return ['success' => false, 'error' => "AUTH LOGIN falhou: $response"];
+    }
+    
+    // Enviar usuário
+    fputs($socket, base64_encode($username) . "\r\n");
+    $response = fgets($socket, 515);
+    if (substr($response, 0, 3) != '334') {
+        fclose($socket);
+        return ['success' => false, 'error' => "Usuário rejeitado: $response"];
+    }
+    
+    // Enviar senha
+    fputs($socket, base64_encode($password) . "\r\n");
+    $response = fgets($socket, 515);
+    if (substr($response, 0, 3) != '235') {
+        fclose($socket);
+        return ['success' => false, 'error' => "Autenticação falhou: $response"];
+    }
     
     // MAIL FROM
     fputs($socket, "MAIL FROM: <$fromEmail>\r\n");
     $response = fgets($socket, 515);
     if (substr($response, 0, 3) != '250') {
         fclose($socket);
-        return ['success' => false, 'error' => "Erro no MAIL FROM: $response"];
+        return ['success' => false, 'error' => "MAIL FROM falhou: $response"];
     }
     
     // RCPT TO
@@ -101,7 +179,7 @@ function sendEmailSMTP($to, $subject, $body, $fromEmail, $fromName, $replyTo) {
     $response = fgets($socket, 515);
     if (substr($response, 0, 3) != '250') {
         fclose($socket);
-        return ['success' => false, 'error' => "Erro no RCPT TO: $response"];
+        return ['success' => false, 'error' => "RCPT TO falhou: $response"];
     }
     
     // DATA
@@ -109,7 +187,7 @@ function sendEmailSMTP($to, $subject, $body, $fromEmail, $fromName, $replyTo) {
     $response = fgets($socket, 515);
     if (substr($response, 0, 3) != '354') {
         fclose($socket);
-        return ['success' => false, 'error' => "Erro no DATA: $response"];
+        return ['success' => false, 'error' => "DATA falhou: $response"];
     }
     
     // Headers e corpo
@@ -131,52 +209,56 @@ function sendEmailSMTP($to, $subject, $body, $fromEmail, $fromName, $replyTo) {
     if (substr($response, 0, 3) == '250') {
         return ['success' => true];
     } else {
-        return ['success' => false, 'error' => "Erro ao enviar: $response"];
+        return ['success' => false, 'error' => "Envio falhou: $response"];
     }
 }
 
-// Tentar primeiro com mail() (mais rápido se funcionar)
-ini_set('sendmail_from', 'contato@jrtechnologysolutions.com.br');
+// Verificar se tem senha configurada
+if (empty($smtpPassword)) {
+    // Se não tem senha, salvar em arquivo e pedir para configurar
+    $logFile = __DIR__ . '/contatos.txt';
+    $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
+    $logEntry .= "AVISO: Senha SMTP não configurada. Configure a senha no arquivo contact.php ou crie .smtp_password\n";
+    $logEntry .= str_repeat('-', 80) . "\n";
+    @file_put_contents($logFile, $logEntry, FILE_APPEND);
+    
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
+    exit;
+}
 
-$headers = "From: Formulário Site <contato@jrtechnologysolutions.com.br>\r\n";
-$headers .= "Reply-To: $email\r\n";
-$headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-$headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
+// Tentar enviar via SMTP
+$smtpResult = sendEmailSMTP(
+    $smtpHost,
+    $smtpPort,
+    $smtpUsername,
+    $smtpPassword,
+    $to,
+    $subject,
+    $emailBody,
+    'contato@jrtechnologysolutions.com.br',
+    'Formulário Site',
+    $email
+);
 
-error_clear_last();
-$mailResult = @mail($to, $subject, $emailBody, $headers);
-
-if ($mailResult) {
-    // Se mail() funcionou, ótimo!
+if ($smtpResult['success']) {
     http_response_code(200);
     echo json_encode(['success' => true, 'message' => 'Mensagem enviada com sucesso!']);
 } else {
-    // Se mail() falhou, tentar SMTP direto
-    $smtpResult = sendEmailSMTP(
-        $to,
-        $subject,
-        $emailBody,
-        'contato@jrtechnologysolutions.com.br',
-        'Formulário Site',
-        $email
-    );
+    // Se falhou, salvar em arquivo
+    $logFile = __DIR__ . '/contatos.txt';
+    $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
+    $logEntry .= "Erro SMTP: " . ($smtpResult['error'] ?? 'Desconhecido') . "\n";
+    $logEntry .= str_repeat('-', 80) . "\n";
+    @file_put_contents($logFile, $logEntry, FILE_APPEND);
     
-    if ($smtpResult['success']) {
-        http_response_code(200);
-        echo json_encode(['success' => true, 'message' => 'Mensagem enviada com sucesso!']);
-    } else {
-        // Se ambos falharam, salvar em arquivo como backup
-        $logFile = __DIR__ . '/contatos.txt';
-        $logEntry = date('Y-m-d H:i:s') . " | Nome: $name | Email: $email | Telefone: $phone | Empresa: $company | Mensagem: $message\n";
-        $logEntry .= "Erro SMTP: " . ($smtpResult['error'] ?? 'Desconhecido') . "\n";
-        $logEntry .= str_repeat('-', 80) . "\n";
-        @file_put_contents($logFile, $logEntry, FILE_APPEND);
-        
-        http_response_code(200);
-        echo json_encode([
-            'success' => true,
-            'message' => 'Mensagem recebida! Entraremos em contato em breve.'
-        ]);
-    }
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Mensagem recebida! Entraremos em contato em breve.'
+    ]);
 }
 ?>
